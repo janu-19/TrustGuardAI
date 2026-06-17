@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from backend.database import Transaction
+from backend.models import Transaction
 from datetime import datetime, timedelta
 import logging
 

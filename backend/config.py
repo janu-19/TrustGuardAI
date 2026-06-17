@@ -4,10 +4,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Settings:
+    PROJECT_NAME: str = "TrustGuard AI"
+    API_V1_STR: str = "/api/v1"
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///trustguard.db")
     JWT_SECRET: str = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     

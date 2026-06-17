@@ -26,7 +26,7 @@ def run_investigation(transaction_info: dict) -> str:
 def _run_gemini_investigation(transaction_info: dict) -> str:
     """Use Gemini AI for investigation"""
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         prompt = f"""You are a fraud investigation expert. Analyze this suspicious transaction and provide a professional report.
 

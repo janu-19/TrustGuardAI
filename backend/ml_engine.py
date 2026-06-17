@@ -33,26 +33,48 @@ _scaler = None
 _feature_names = None
 
 def get_model_path():
-    return "backend/models/fraud_detector.joblib"
+    from backend.config import settings
+    return settings.ML_MODEL_PATH
 
 def get_explainer_path():
-    return "backend/models/shap_explainer.joblib"
+    from backend.config import settings
+    return settings.EXPLAINER_PATH
 
 def load_model():
-    global _model_cache
-    if _model_cache is not None:
-        return _model_cache
+    global _model_cache, _explainer_cache
+    model = _model_cache
+    explainer = _explainer_cache
+    base_value = 0.0
+    is_fallback = not HAS_XGB
     
     model_path = get_model_path()
-    if os.path.exists(model_path):
+    if model is None and os.path.exists(model_path):
         try:
-            _model_cache = joblib.load(model_path)
+            model = joblib.load(model_path)
+            _model_cache = model
             logger.info(f"✅ Model loaded from {model_path}")
-            return _model_cache
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
-            return None
-    return None
+            
+    explainer_path = get_explainer_path()
+    if explainer is None and os.path.exists(explainer_path):
+        try:
+            explainer = joblib.load(explainer_path)
+            _explainer_cache = explainer
+            logger.info(f"✅ SHAP explainer loaded from {explainer_path}")
+        except Exception as e:
+            logger.warning(f"Failed to load explainer: {e}")
+            
+    if explainer is not None:
+        try:
+            if hasattr(explainer, "expected_value"):
+                base_value = explainer.expected_value
+                if isinstance(base_value, np.ndarray):
+                    base_value = base_value[0]
+        except Exception as e:
+            pass
+            
+    return model, explainer, base_value, is_fallback
 
 def load_explainer():
     global _explainer_cache
@@ -70,14 +92,23 @@ def load_explainer():
             return None
     return None
 
-def train_model_on_csv(csv_path: str = "creditcard.csv"):
+def train_model_on_csv(
+    csv_path: str = "creditcard.csv",
+    model_save_path: str = None,
+    explainer_save_path: str = None
+):
     """Train fraud detection model on CSV dataset"""
     global _model_cache, _explainer_cache, _scaler, _feature_names
     
     if not os.path.exists(csv_path):
         logger.warning(f"Dataset not found at {csv_path}")
-        return
+        raise FileNotFoundError(f"Dataset not found at {csv_path}")
     
+    if model_save_path is None:
+        model_save_path = get_model_path()
+    if explainer_save_path is None:
+        explainer_save_path = get_explainer_path()
+        
     try:
         # Load dataset
         df = pd.read_csv(csv_path)
@@ -156,30 +187,39 @@ def train_model_on_csv(csv_path: str = "creditcard.csv"):
         logger.info(f"  CM: {cm}")
         
         # Save model
-        os.makedirs("backend/models", exist_ok=True)
-        model_path = get_model_path()
-        joblib.dump(model, model_path)
-        logger.info(f"✅ Model saved to {model_path}")
+        os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
+        joblib.dump(model, model_save_path)
+        logger.info(f"✅ Model saved to {model_save_path}")
         
         # Train and save SHAP explainer
         if HAS_SHAP and len(X_train_scaled) < 1000:
             try:
                 explainer = shap.TreeExplainer(model)
-                joblib.dump(explainer, get_explainer_path())
-                logger.info(f"✅ SHAP explainer saved")
+                os.makedirs(os.path.dirname(explainer_save_path), exist_ok=True)
+                joblib.dump(explainer, explainer_save_path)
+                logger.info(f"✅ SHAP explainer saved to {explainer_save_path}")
             except Exception as e:
                 logger.warning(f"Failed to save SHAP explainer: {e}")
         
         _model_cache = model
         
+        return {
+            "accuracy": float(accuracy),
+            "precision": float(precision),
+            "recall": float(recall),
+            "f1": float(f1),
+            "roc_auc": float(roc_auc)
+        }
+        
     except Exception as e:
         logger.error(f"Model training failed: {e}")
         import traceback
         traceback.print_exc()
+        raise e
 
 def score_transaction(transaction_data: dict) -> dict:
     """Score a transaction for fraud risk"""
-    model = load_model()
+    model, explainer, base_value, is_fallback = load_model()
     
     # Feature mapping for semantic names to dataset columns
     feature_mapping = {

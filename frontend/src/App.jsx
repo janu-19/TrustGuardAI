@@ -1,189 +1,301 @@
-import { useState, useEffect } from 'react'
-import { AlertCircle, LogOut } from 'lucide-react'
-import Login from './components/Login'
-import Navbar from './components/Navbar'
-import DashboardOverview from './components/DashboardOverview'
-import LiveFeed from './components/LiveFeed'
-import AnalyticsCharts from './components/AnalyticsCharts'
-import TrustRankings from './components/TrustRankings'
-import InvestigationPortal from './components/InvestigationPortal'
-import AdminControls from './components/AdminControls'
-import AlertsList from './components/AlertsList'
+import React, { useState, useEffect, useRef } from 'react';
+import Navbar from './components/Navbar';
+import DashboardOverview from './components/DashboardOverview';
+import LiveFeed from './components/LiveFeed';
+import AlertsList from './components/AlertsList';
+import TrustRankings from './components/TrustRankings';
+import InvestigationPortal from './components/InvestigationPortal';
+import AnalyticsCharts from './components/AnalyticsCharts';
+import Heatmap from './components/Heatmap';
+import AdminControls from './components/AdminControls';
+import Login from './components/Login';
+
+const BACKEND_URL = "http://localhost:8000";
+const WS_URL = "ws://localhost:8000";
 
 function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const [userInfo, setUserInfo] = useState(null)
-  const [transactions, setTransactions] = useState([])
-  const [alerts, setAlerts] = useState([])
-  const [selectedTransaction, setSelectedTransaction] = useState(null)
-  const [showInvestigation, setShowInvestigation] = useState(false)
-  const [wsStatus, setWsStatus] = useState('connecting')
+  const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [transactions, setTransactions] = useState([]);
+  const [selectedTxId, setSelectedTxId] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [cacheStats, setCacheStats] = useState({ hits: 0, misses: 0, ratio: 0.0, fallback_mode: true });
+  const [dbStats, setDbStats] = useState({ total_transactions: 0, flagged_transactions: 0, pending_reviews: 0, fraud_rate: 0.0 });
+  const [simulatorStatus, setSimulatorStatus] = useState({ is_running: false, interval_seconds: 2.0 });
+  const wsRef = useRef(null);
 
+  // Load user data on startup if token exists
   useEffect(() => {
-    if (!isLoggedIn) return
-
-    const connectWebSocket = () => {
-      try {
-        const ws = new WebSocket('ws://127.0.0.1:8000/ws/transactions')
-
-        ws.onopen = () => {
-          setWsStatus('connected')
-          console.log('WebSocket connected')
-        }
-
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data)
-            
-            if (data.type === 'NEW_TRANSACTION') {
-              setTransactions(prev => {
-                const updated = [data.transaction, ...prev].slice(0, 100)
-                return updated
-              })
-
-              // Check if high risk and add to alerts
-              if (data.transaction.risk_score > 70) {
-                setAlerts(prev => [{
-                  id: data.transaction.id,
-                  transaction_id: data.transaction.id,
-                  message: `High-risk transaction: $${data.transaction.amount}`,
-                  timestamp: new Date().toISOString(),
-                  severity: 'high',
-                  transaction: data.transaction
-                }, ...prev].slice(0, 50))
-              }
-            }
-          } catch (e) {
-            console.error('Error parsing message:', e)
-          }
-        }
-
-        ws.onerror = (error) => {
-          setWsStatus('error')
-          console.error('WebSocket error:', error)
-        }
-
-        ws.onclose = () => {
-          setWsStatus('disconnected')
-          console.log('WebSocket disconnected')
-          // Reconnect after 3 seconds
-          setTimeout(connectWebSocket, 3000)
-        }
-
-        return ws
-      } catch (e) {
-        console.error('WebSocket connection error:', e)
-        setWsStatus('error')
+    if (token) {
+      localStorage.setItem('token', token);
+      fetchUserProfile();
+      fetchInitialTransactions();
+      fetchCacheStats();
+      fetchDbStats();
+      fetchSimulatorStatus();
+    } else {
+      localStorage.removeItem('token');
+      setUser(null);
+      setTransactions([]);
+      if (wsRef.current) {
+        wsRef.current.close();
       }
     }
+  }, [token]);
 
-    const ws = connectWebSocket()
+  // Set up WebSocket connection for real-time transaction streaming
+  useEffect(() => {
+    if (!token || !user) return;
+
+    const connectWebSocket = () => {
+      const socketUrl = `${WS_URL}/ws/transactions?token=${token}`;
+      logger("Connecting to WebSocket feed...");
+      const ws = new WebSocket(socketUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setIsConnected(true);
+        logger("WebSocket feed connected!");
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === "NEW_TRANSACTION") {
+            const tx = payload.data;
+            setTransactions(prev => [tx, ...prev].slice(0, 300)); // Cap local list at 300
+            
+            // Periodically refresh cache metrics and simulator telemetry
+            fetchCacheStats();
+            fetchDbStats();
+            
+            // Trigger browser notification or UI toast if flagged
+            if (tx.is_flagged) {
+              playAlertSound();
+            }
+          }
+        } catch (err) {
+          console.error("Error parsing websocket message:", err);
+        }
+      };
+
+      ws.onclose = () => {
+        setIsConnected(false);
+        logger("WebSocket feed closed. Attempting reconnect...");
+        // Reconnect after 3 seconds
+        setTimeout(() => {
+          if (token) connectWebSocket();
+        }, 3000);
+      };
+
+      ws.onerror = (err) => {
+        console.error("WebSocket error:", err);
+        ws.close();
+      };
+    };
+
+    connectWebSocket();
+
     return () => {
-      if (ws) ws.close()
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [token, user]);
+
+  const fetchUserProfile = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/me`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUser(data);
+      } else if (res.status === 401) {
+        handleLogout();
+      }
+    } catch (err) {
+      console.error("Failed to fetch user profile:", err);
     }
-  }, [isLoggedIn])
+  };
+
+  const fetchInitialTransactions = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/transactions/?limit=100`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTransactions(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch transactions:", err);
+    }
+  };
+
+  const fetchCacheStats = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/admin/cache/stats`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCacheStats(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch cache stats:", err);
+    }
+  };
+
+  const fetchSimulatorStatus = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/admin/simulator/status`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSimulatorStatus(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch simulator status:", err);
+    }
+  };
+
+  const fetchDbStats = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/transactions/stats`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDbStats(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch database stats:", err);
+    }
+  };
 
   const handleLogout = () => {
-    setIsLoggedIn(false)
-    setUserInfo(null)
-    setTransactions([])
-    setAlerts([])
-    localStorage.removeItem('access_token')
-  }
+    setToken('');
+    setUser(null);
+  };
 
-  if (!isLoggedIn) {
-    return <Login onLoginSuccess={(info) => {
-      setIsLoggedIn(true)
-      setUserInfo(info)
-    }} />
+  const playAlertSound = () => {
+    try {
+      // Audio synth beep for quick visual/auditory confirmation
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      oscillator.type = "sine";
+      oscillator.frequency.value = 520; // 520Hz pitch
+      gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime);
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.15); // short beep
+    } catch (e) {
+      // Suppress sound context errors (e.g. user hasn't interacted with page yet)
+    }
+  };
+
+  const logger = (msg) => {
+    console.log(`[TrustGuard UI] ${msg}`);
+  };
+
+  if (!token) {
+    return <Login setToken={setToken} backendUrl={BACKEND_URL} />;
   }
 
   return (
-    <div className="min-h-screen bg-dark-900 text-white">
+    <div className="flex flex-col min-h-screen bg-darkBg text-slate-100 font-sans">
       <Navbar 
-        wsStatus={wsStatus} 
-        transactionCount={transactions.length}
-        alertCount={alerts.length}
+        activeTab={activeTab} 
+        setActiveTab={setActiveTab} 
+        user={user} 
+        onLogout={handleLogout} 
+        isConnected={isConnected} 
       />
       
-      <div className="p-6 max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="flex justify-between items-center mb-6">
-          <div>
-            <h1 className="text-3xl font-bold">TrustGuard Dashboard</h1>
-            <p className="text-dark-400 mt-1">Real-time fraud detection and investigation</p>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 px-4 py-2 rounded transition"
-          >
-            <LogOut size={18} />
-            Logout
-          </button>
-        </div>
-
-        {/* Critical Alerts */}
-        {alerts.length > 0 && (
-          <div className="bg-red-900 border-l-4 border-red-500 p-4 rounded mb-6 flex items-center gap-3">
-            <AlertCircle size={24} />
-            <div>
-              <h3 className="font-bold">Active Alerts</h3>
-              <p className="text-red-100">{alerts.length} potential fraud cases requiring investigation</p>
-            </div>
-          </div>
-        )}
-
-        {/* Dashboard Overview */}
-        <DashboardOverview transactions={transactions} alerts={alerts} />
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-          {/* Main Content */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Analytics */}
-            <AnalyticsCharts transactions={transactions} />
-
-            {/* Live Feed */}
-            <LiveFeed 
-              transactions={transactions.slice(0, 10)}
-              onSelectTransaction={(tx) => {
-                setSelectedTransaction(tx)
-                setShowInvestigation(true)
-              }}
-            />
-          </div>
-
-          {/* Sidebar */}
-          <div className="space-y-6">
-            {/* Trust Rankings */}
-            <TrustRankings transactions={transactions} />
-
-            {/* Admin Controls */}
-            <AdminControls />
-
-            {/* Alerts List */}
-            <AlertsList 
-              alerts={alerts.slice(0, 5)}
-              onSelectAlert={(alert) => {
-                setSelectedTransaction(alert.transaction)
-                setShowInvestigation(true)
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Investigation Portal Modal */}
-        {showInvestigation && selectedTransaction && (
-          <InvestigationPortal
-            transaction={selectedTransaction}
-            onClose={() => {
-              setShowInvestigation(false)
-              setSelectedTransaction(null)
-            }}
+      <main className="flex-1 w-full max-w-7xl mx-auto px-4 py-6">
+        {activeTab === 'dashboard' && (
+          <DashboardOverview 
+            transactions={transactions} 
+            cacheStats={cacheStats}
+            simulatorStatus={simulatorStatus}
+            setActiveTab={setActiveTab}
+            setSelectedTxId={setSelectedTxId}
+            dbStats={dbStats}
           />
         )}
-      </div>
+        
+        {activeTab === 'live-feed' && (
+          <LiveFeed 
+            transactions={transactions} 
+            setSelectedTxId={setSelectedTxId}
+            setActiveTab={setActiveTab}
+          />
+        )}
+        
+        {activeTab === 'alerts' && (
+          <AlertsList 
+            transactions={transactions} 
+            setTransactions={setTransactions}
+            token={token}
+            backendUrl={BACKEND_URL}
+            setSelectedTxId={setSelectedTxId}
+            setActiveTab={setActiveTab}
+            fetchCacheStats={fetchCacheStats}
+            fetchDbStats={fetchDbStats}
+          />
+        )}
+        
+        {activeTab === 'users' && (
+          <TrustRankings 
+            token={token} 
+            backendUrl={BACKEND_URL} 
+          />
+        )}
+        
+        {activeTab === 'reports' && (
+          <InvestigationPortal 
+            selectedTxId={selectedTxId} 
+            setSelectedTxId={setSelectedTxId}
+            transactions={transactions}
+            token={token} 
+            backendUrl={BACKEND_URL}
+          />
+        )}
+        
+        {activeTab === 'analytics' && (
+          <AnalyticsCharts 
+            transactions={transactions} 
+          />
+        )}
+
+        {activeTab === 'heatmap' && (
+          <Heatmap 
+            transactions={transactions} 
+          />
+        )}
+        
+        {activeTab === 'admin' && (
+          <AdminControls 
+            token={token} 
+            backendUrl={BACKEND_URL} 
+            simulatorStatus={simulatorStatus}
+            fetchSimulatorStatus={fetchSimulatorStatus}
+            cacheStats={cacheStats}
+            fetchCacheStats={fetchCacheStats}
+          />
+        )}
+      </main>
+      
+      <footer className="py-4 text-center border-t border-cardBorder/40 bg-cardBg/30 text-xs text-slate-500">
+        <p>TrustGuard AI Fraud Intelligence Platform &copy; 2026. Inspired by Stripe & TrustGuard Risk Infrastructure.</p>
+      </footer>
     </div>
-  )
+  );
 }
 
-export default App
+export default App;

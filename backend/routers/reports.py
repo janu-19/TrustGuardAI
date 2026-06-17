@@ -1,65 +1,187 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from backend.database import get_db, Transaction, Investigation
-from datetime import datetime, timedelta
+from backend.database import get_db
+from backend.models import Transaction, Investigation, User
+from backend.investigation import run_investigation
+from backend.auth import get_current_user
+import uuid
+import logging
+from datetime import datetime
 
-router = APIRouter()
+logger = logging.getLogger("trustguard.reports_router")
 
-@router.get("/summary")
-async def get_report_summary(db: Session = Depends(get_db)):
-    """Get fraud report summary"""
+router = APIRouter(prefix="/reports", tags=["reports"])
+
+def build_investigation_response(inv: Investigation, tx: Transaction):
+    """Format investigation object to match InvestigationPortal.jsx requirements"""
+    # Build analyst analysis payload
+    analyst_analysis = {
+        "node": "Risk Analyst",
+        "action": inv.recommendation or "REVIEW",
+        "decision": inv.recommendation or "REVIEW",
+        "status": "COMPLETED",
+        "timestamp": inv.created_at.isoformat() if inv.created_at else datetime.utcnow().isoformat(),
+        "final_score": tx.risk_score,
+        "classification": tx.risk_status,
+        "reviewer": "AI Risk Agent",
+        "agreement": "High"
+    }
     
-    # Get statistics
-    total_transactions = db.query(Transaction).count()
-    high_risk = db.query(Transaction).filter(Transaction.risk_score > 70).count()
-    fraud_count = db.query(Transaction).filter(Transaction.is_fraud == True).count()
-    
-    # Get transactions in last 24 hours
-    since = datetime.utcnow() - timedelta(hours=24)
-    recent = db.query(Transaction).filter(Transaction.timestamp > since).count()
-    
-    # Average risk score
-    from sqlalchemy import func
-    avg_risk = db.query(func.avg(Transaction.risk_score)).scalar() or 0
+    # Build investigator analysis payload
+    investigator_analysis = {
+        "node": "Investigator Agent",
+        "findings": inv.findings or {},
+        "transaction_telemetry": {
+            "id": tx.id,
+            "user_id": tx.user_id,
+            "amount": tx.amount,
+            "merchant": tx.merchant,
+            "location": tx.location,
+            "device": tx.device,
+            "risk_score": tx.risk_score,
+            "timestamp": tx.timestamp.isoformat()
+        }
+    }
     
     return {
-        'total_transactions': total_transactions,
-        'high_risk_count': high_risk,
-        'fraud_count': fraud_count,
-        'recent_24h': recent,
-        'average_risk_score': float(avg_risk),
-        'high_risk_percentage': (high_risk / total_transactions * 100) if total_transactions > 0 else 0
+        "transaction_id": tx.id,
+        "report_summary": inv.report,
+        "investigator_analysis": investigator_analysis,
+        "analyst_analysis": analyst_analysis
     }
 
-@router.get("/by-user/{user_id}")
-async def get_user_report(user_id: str, db: Session = Depends(get_db)):
-    """Get report for specific user"""
+@router.get("/{transaction_id}")
+async def get_investigation_report(
+    transaction_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Retrieve or generate agentic AI investigation report for a transaction"""
     
-    transactions = db.query(Transaction).filter(
-        Transaction.user_id == user_id
-    ).order_by(Transaction.timestamp.desc()).all()
+    # Verify transaction exists and belongs to organization
+    tx = db.query(Transaction).filter(
+        Transaction.id == transaction_id,
+        Transaction.organization_id == current_user.organization_id
+    ).first()
     
-    if not transactions:
-        raise HTTPException(status_code=404, detail="No transactions found for user")
+    if not tx:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transaction not found or unauthorized access"
+        )
+        
+    # Look for existing report
+    inv = db.query(Investigation).filter(Investigation.transaction_id == transaction_id).first()
     
-    high_risk_count = len([t for t in transactions if t.risk_score > 70])
-    fraud_count = len([t for t in transactions if t.is_fraud])
-    
-    return {
-        'user_id': user_id,
-        'transaction_count': len(transactions),
-        'high_risk_count': high_risk_count,
-        'fraud_count': fraud_count,
-        'average_risk_score': sum(t.risk_score for t in transactions) / len(transactions),
-        'recent_transactions': transactions[:10]
-    }
+    if not inv:
+        # Generate on-the-fly if it wasn't saved before
+        logger.info(f"Report for TX {transaction_id} not found in database. Initiating on-the-fly generation...")
+        try:
+            report_str = run_investigation({
+                'transaction_id': tx.id,
+                'user_id': tx.user_id,
+                'amount': tx.amount,
+                'merchant': tx.merchant,
+                'location': tx.location,
+                'device': tx.device,
+                'risk_score': tx.risk_score,
+                'risk_factors': tx.explanation or {}
+            })
+            
+            findings = {
+                "device_fingerprint": tx.device,
+                "location_deviation": tx.location != "New York, US",
+                "rules_matched": tx.explanation or {}
+            }
+            
+            inv = Investigation(
+                id=f"inv_{uuid.uuid4().hex[:12]}",
+                transaction_id=tx.id,
+                user_id=tx.user_id,
+                findings=findings,
+                recommendation="DECLINE" if tx.risk_score > 85 else "REQUIRE REVIEW",
+                report=report_str,
+                organization_id=current_user.organization_id
+            )
+            db.add(inv)
+            db.commit()
+            db.refresh(inv)
+        except Exception as e:
+            logger.error(f"Failed to generate report on-the-fly: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to generate report: {str(e)}"
+            )
+            
+    return build_investigation_response(inv, tx)
 
-@router.get("/investigations")
-async def get_investigations(db: Session = Depends(get_db), limit: int = 50):
-    """Get recent investigations"""
+@router.post("/{transaction_id}/reinvestigate")
+async def reinvestigate_transaction(
+    transaction_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Force rerun AI agent node investigation pipeline for transaction"""
     
-    investigations = db.query(Investigation).order_by(
-        Investigation.created_at.desc()
-    ).limit(limit).all()
+    tx = db.query(Transaction).filter(
+        Transaction.id == transaction_id,
+        Transaction.organization_id == current_user.organization_id
+    ).first()
     
-    return investigations
+    if not tx:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transaction not found or unauthorized access"
+        )
+        
+    try:
+        # Rerun investigation
+        logger.info(f"Re-running AI agents for TX {transaction_id}...")
+        report_str = run_investigation({
+            'transaction_id': tx.id,
+            'user_id': tx.user_id,
+            'amount': tx.amount,
+            'merchant': tx.merchant,
+            'location': tx.location,
+            'device': tx.device,
+            'risk_score': tx.risk_score,
+            'risk_factors': tx.explanation or {}
+        })
+        
+        # Look for existing report to update, or create a new one
+        inv = db.query(Investigation).filter(Investigation.transaction_id == transaction_id).first()
+        
+        findings = {
+            "device_fingerprint": tx.device,
+            "location_deviation": tx.location != "New York, US",
+            "rules_matched": tx.explanation or {},
+            "reinvestigated_at": datetime.utcnow().isoformat()
+        }
+        
+        if inv:
+            inv.report = report_str
+            inv.findings = findings
+            inv.recommendation = "DECLINE" if tx.risk_score > 85 else "REQUIRE REVIEW"
+            inv.created_at = datetime.utcnow()
+        else:
+            inv = Investigation(
+                id=f"inv_{uuid.uuid4().hex[:12]}",
+                transaction_id=tx.id,
+                user_id=tx.user_id,
+                findings=findings,
+                recommendation="DECLINE" if tx.risk_score > 85 else "REQUIRE REVIEW",
+                report=report_str,
+                organization_id=current_user.organization_id
+            )
+            db.add(inv)
+            
+        db.commit()
+        db.refresh(inv)
+        
+        return build_investigation_response(inv, tx)
+    except Exception as e:
+        logger.error(f"Reinvestigation failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Reinvestigation failed: {str(e)}"
+        )
