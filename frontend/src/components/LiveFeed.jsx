@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { parseUTC } from '../utils';
 import { Radio, Play, Pause, AlertCircle, FileText } from 'lucide-react';
 
 function LiveFeed({ transactions, setSelectedTxId, setActiveTab }) {
@@ -109,7 +110,7 @@ function LiveFeed({ transactions, setSelectedTxId, setActiveTab }) {
                 displayedTxs.map((tx) => (
                   <tr key={tx.transaction_id} className={`transition-colors ${getRiskRowBg(tx.status)}`}>
                     <td className="p-4 font-semibold text-slate-400">
-                      {new Date(tx.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      {parseUTC(tx.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                     </td>
                     <td className="p-4 font-mono font-medium text-slate-300">
                       {tx.transaction_id}

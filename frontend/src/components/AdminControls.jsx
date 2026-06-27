@@ -1,11 +1,57 @@
 import React, { useState } from 'react';
-import { Settings, Play, Square, Database, Cpu, HelpCircle, RefreshCw, Zap } from 'lucide-react';
+import { Settings, Play, Square, Database, Cpu, HelpCircle, RefreshCw, Zap, Send } from 'lucide-react';
 
-function AdminControls({ token, backendUrl, simulatorStatus, fetchSimulatorStatus, cacheStats, fetchCacheStats }) {
+function AdminControls({ token, backendUrl, simulatorStatus, fetchSimulatorStatus, cacheStats, fetchCacheStats, onLogout }) {
   const [trainingStatus, setTrainingStatus] = useState('');
   const [seedingStatus, setSeedingStatus] = useState('');
   const [clearingCache, setClearingCache] = useState(false);
   const [togglingSim, setTogglingSim] = useState(false);
+
+  // Manual transaction input state
+  const [manualUser, setManualUser] = useState('user_john');
+  const [manualAmount, setManualAmount] = useState('150.00');
+  const [manualMerchant, setManualMerchant] = useState('Uber Trips');
+  const [manualLocation, setManualLocation] = useState('New York, US');
+  const [manualDevice, setManualDevice] = useState('iPhone 15');
+  const [submittingManual, setSubmittingManual] = useState(false);
+  const [submissionResult, setSubmissionResult] = useState('');
+
+  const handleScoreManualTransaction = async (e) => {
+    e.preventDefault();
+    setSubmittingManual(true);
+    setSubmissionResult('');
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/transactions/score-transaction`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          user_id: manualUser,
+          amount: parseFloat(manualAmount),
+          merchant: manualMerchant,
+          location: manualLocation,
+          device: manualDevice
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSubmissionResult(`Success! Risk Score: ${data.risk_score.toFixed(1)}% | Status: ${data.status}`);
+      } else {
+        if (res.status === 401 && onLogout) {
+          onLogout();
+          return;
+        }
+        const errData = await res.json();
+        setSubmissionResult(`Error: ${errData.detail || 'Failed to submit'}`);
+      }
+    } catch (err) {
+      setSubmissionResult("Network error when submitting transaction.");
+    } finally {
+      setSubmittingManual(false);
+    }
+  };
 
   const handleToggleSimulator = async () => {
     setTogglingSim(true);
@@ -17,6 +63,8 @@ function AdminControls({ token, backendUrl, simulatorStatus, fetchSimulatorStatu
       });
       if (res.ok) {
         await fetchSimulatorStatus();
+      } else if (res.status === 401 && onLogout) {
+        onLogout();
       }
     } catch (err) {
       console.error("Simulator toggle failed:", err);
@@ -34,6 +82,8 @@ function AdminControls({ token, backendUrl, simulatorStatus, fetchSimulatorStatu
       if (res.ok) {
         const data = await res.json();
         alert(`Successfully injected simulated fraud: ${fraudType}! Transaction: ${data.transaction.transaction_id}`);
+      } else if (res.status === 401 && onLogout) {
+        onLogout();
       }
     } catch (err) {
       console.error("Fraud injection failed:", err);
@@ -51,6 +101,10 @@ function AdminControls({ token, backendUrl, simulatorStatus, fetchSimulatorStatu
         const data = await res.json();
         setTrainingStatus(data.message);
       } else {
+        if (res.status === 401 && onLogout) {
+          onLogout();
+          return;
+        }
         const err = await res.json();
         setTrainingStatus(`Error: ${err.detail}`);
       }
@@ -68,6 +122,8 @@ function AdminControls({ token, backendUrl, simulatorStatus, fetchSimulatorStatu
       });
       if (res.ok) {
         await fetchCacheStats();
+      } else if (res.status === 401 && onLogout) {
+        onLogout();
       }
     } catch (err) {
       console.error("Cache flush failed:", err);
@@ -86,6 +142,8 @@ function AdminControls({ token, backendUrl, simulatorStatus, fetchSimulatorStatu
       if (res.ok) {
         const data = await res.json();
         setSeedingStatus(data.message);
+      } else if (res.status === 401 && onLogout) {
+        onLogout();
       }
     } catch (err) {
       setSeedingStatus("Seeding failed. Verify DB connection is healthy.");
@@ -177,6 +235,90 @@ function AdminControls({ token, backendUrl, simulatorStatus, fetchSimulatorStatu
 
         {/* Panel 2: Model & Cache Database management */}
         <div className="space-y-6">
+
+          {/* Manual Transaction Input Form */}
+          <div className="p-6 rounded-2xl glass-panel border border-cardBorder shadow-xl space-y-4">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+              <Send className="w-4 h-4 text-indigo-400" /> Manual Transaction Entry
+            </h3>
+            <p className="text-[11px] text-slate-500 leading-normal">
+              Directly input custom transaction parameters to test the ML scoring and risk evaluation pipeline.
+            </p>
+            
+            <form onSubmit={handleScoreManualTransaction} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">User ID</label>
+                  <input 
+                    type="text" 
+                    value={manualUser}
+                    onChange={(e) => setManualUser(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950/60 rounded-xl border border-cardBorder/60 focus:border-indigo-500 focus:outline-none text-slate-100 text-xs"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Amount ($)</label>
+                  <input 
+                    type="number" 
+                    step="0.01"
+                    value={manualAmount}
+                    onChange={(e) => setManualAmount(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950/60 rounded-xl border border-cardBorder/60 focus:border-indigo-500 focus:outline-none text-slate-100 text-xs"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Merchant</label>
+                  <input 
+                    type="text" 
+                    value={manualMerchant}
+                    onChange={(e) => setManualMerchant(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950/60 rounded-xl border border-cardBorder/60 focus:border-indigo-500 focus:outline-none text-slate-100 text-xs"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Location</label>
+                  <input 
+                    type="text" 
+                    value={manualLocation}
+                    onChange={(e) => setManualLocation(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950/60 rounded-xl border border-cardBorder/60 focus:border-indigo-500 focus:outline-none text-slate-100 text-xs"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Device Fingerprint</label>
+                <input 
+                  type="text" 
+                  value={manualDevice}
+                  onChange={(e) => setManualDevice(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950/60 rounded-xl border border-cardBorder/60 focus:border-indigo-500 focus:outline-none text-slate-100 text-xs"
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={submittingManual}
+                className="w-full py-2.5 mt-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs tracking-wider uppercase rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {submittingManual ? 'SUBMITTING...' : 'SCORE & SUBMIT'}
+              </button>
+            </form>
+
+            {submissionResult && (
+              <div className={`p-3 border rounded-xl text-[10px] font-mono ${submissionResult.includes('Error') ? 'bg-red-500/15 border-red-500/20 text-red-400' : 'bg-emerald-500/15 border-emerald-500/20 text-emerald-400'}`}>
+                {submissionResult}
+              </div>
+            )}
+          </div>
           
           {/* XGBoost Training Panel */}
           <div className="p-6 rounded-2xl glass-panel border border-cardBorder shadow-xl space-y-4">

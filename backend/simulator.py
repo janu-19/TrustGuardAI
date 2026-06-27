@@ -96,7 +96,13 @@ class TransactionSimulator:
         while self.running:
             try:
                 db = SessionLocal()
-                self.generate_and_process_transaction(db)
+                # Query all active organizations from the DB to support multi-tenancy live streams
+                orgs = db.query(Organization).all()
+                if orgs:
+                    for org in orgs:
+                        self.generate_and_process_transaction(db, org_id=org.id)
+                else:
+                    self.generate_and_process_transaction(db, org_id="org_trustguard")
                 db.close()
                 time.sleep(self.interval)
             except Exception as e:
@@ -163,8 +169,8 @@ class TransactionSimulator:
         
         # Parse location
         location_parts = location.split(', ')
-        city = location_parts[0] if len(location_parts) > 0 else "New York"
-        country = location_parts[1] if len(location_parts) > 1 else "US"
+        city = location_parts[0] if len(location_parts) > 0 else "Vijayawada"
+        country = location_parts[1] if len(location_parts) > 1 else "India"
         payment_method = random.choice(['credit_card', 'debit_card', 'upi', 'net_banking'])
         merchant_category = merchant_cfg['category']
         device_id = f"dev_{uuid.uuid4().hex[:8]}"

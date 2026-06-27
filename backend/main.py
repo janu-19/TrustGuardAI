@@ -128,6 +128,12 @@ async def websocket_transactions(websocket: WebSocket, token: str = Query(...)):
         logger.error(f"WebSocket connection error: {e}")
         ws_manager.disconnect(websocket, org_id)
 
+@app.websocket("/testws")
+async def test_websocket(websocket: WebSocket):
+    await websocket.accept()
+    await websocket.send_text("hello")
+    await websocket.close()
+
 @app.get("/")
 def health_check():
     return {

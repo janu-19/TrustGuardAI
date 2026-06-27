@@ -7,6 +7,7 @@ class Settings:
     PROJECT_NAME: str = "TrustGuard AI"
     API_V1_STR: str = "/api/v1"
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///trustguard.db")
+    REDIS_URL: str = os.getenv("REDIS_URL", "")
     JWT_SECRET: str = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60

@@ -101,7 +101,11 @@ async def toggle_simulator(run: bool):
         return {"status": "suspended", "is_running": False}
 
 @router.post("/simulator/inject-fraud")
-async def inject_fraud(fraud_type: str, db: Session = Depends(get_db)):
+async def inject_fraud(
+    fraud_type: str, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     """Inject a manual fraud vector transaction"""
     valid_types = ['unusual_amount', 'impossible_travel', 'new_device', 'multiple_rapid', 'card_testing', 'night_activity']
     if fraud_type not in valid_types:
@@ -111,7 +115,7 @@ async def inject_fraud(fraud_type: str, db: Session = Depends(get_db)):
         )
     
     try:
-        tx = simulator.generate_and_process_transaction(db, force_fraud_type=fraud_type, org_id="org_trustguard")
+        tx = simulator.generate_and_process_transaction(db, force_fraud_type=fraud_type, org_id=current_user.organization_id)
         return {
             "status": "success",
             "message": f"Successfully injected {fraud_type} fraud transaction",

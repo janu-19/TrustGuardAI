@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
+import { parseUTC } from '../utils';
 import { AlertTriangle, BarChart3, ShieldCheck, ShieldAlert, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 
-function AlertsList({ transactions, setTransactions, token, backendUrl, setSelectedTxId, setActiveTab, fetchCacheStats, fetchDbStats }) {
+function AlertsList({ transactions, setTransactions, token, backendUrl, setSelectedTxId, setActiveTab, fetchCacheStats, fetchDbStats, onLogout }) {
   const [expandedTxId, setExpandedTxId] = useState(null);
   const [updatingId, setUpdatingId] = useState(null);
 
@@ -31,6 +32,8 @@ function AlertsList({ transactions, setTransactions, token, backendUrl, setSelec
         setTransactions(prev => prev.map(t => t.transaction_id === txId ? updatedTx : t));
         fetchCacheStats(); // update hit misses if trust changes
         if (fetchDbStats) fetchDbStats();
+      } else if (res.status === 401 && onLogout) {
+        onLogout();
       }
     } catch (err) {
       console.error("Decision post failed:", err);
@@ -105,7 +108,7 @@ function AlertsList({ transactions, setTransactions, token, backendUrl, setSelec
                           {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
                         </td>
                         <td className="p-4 text-slate-400 font-semibold">
-                          {new Date(tx.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                          {parseUTC(tx.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
                         </td>
                         <td className="p-4 font-mono font-medium text-slate-300">
                           {tx.transaction_id}
@@ -219,7 +222,7 @@ function AlertsList({ transactions, setTransactions, token, backendUrl, setSelec
                                   </div>
                                 ) : (
                                   <div className="p-3 bg-slate-900/40 border border-cardBorder/40 rounded-xl text-slate-400 text-[11px]">
-                                    Case resolved as <span className="font-bold text-slate-200">{tx.decision}</span> by analyst <b>{tx.decision_by}</b> on {new Date(tx.decision_at).toLocaleString()}.
+                                    Case resolved as <span className="font-bold text-slate-200">{tx.decision}</span> by analyst <b>{tx.decision_by}</b> on {parseUTC(tx.decision_at).toLocaleString()}.
                                   </div>
                                 )}
 

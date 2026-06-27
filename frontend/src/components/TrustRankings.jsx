@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { parseUTC } from '../utils';
 import { Users, ShieldCheck, ShieldAlert, AlertCircle, TrendingDown, Clock, Shield } from 'lucide-react';
 
-function TrustRankings({ token, backendUrl }) {
+function TrustRankings({ token, backendUrl, onLogout }) {
   const [users, setUsers] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [scoreDetails, setScoreDetails] = useState(null);
@@ -32,6 +33,8 @@ function TrustRankings({ token, backendUrl }) {
         if (data.length > 0 && !selectedUserId) {
           setSelectedUserId(data[0].user_id);
         }
+      } else if (res.status === 401 && onLogout) {
+        onLogout();
       }
     } catch (err) {
       console.error("Failed to fetch users rankings:", err);
@@ -48,6 +51,8 @@ function TrustRankings({ token, backendUrl }) {
       if (res.ok) {
         const data = await res.json();
         setScoreDetails(data);
+      } else if (res.status === 401 && onLogout) {
+        onLogout();
       }
     } catch (err) {
       console.error("Failed to fetch user score details:", err);
@@ -63,6 +68,8 @@ function TrustRankings({ token, backendUrl }) {
       if (res.ok) {
         const data = await res.json();
         setHistory(data);
+      } else if (res.status === 401 && onLogout) {
+        onLogout();
       }
     } catch (err) {
       console.error("Failed to fetch user trust history:", err);
@@ -188,7 +195,7 @@ function TrustRankings({ token, backendUrl }) {
                           <div className="flex items-start justify-between text-xs">
                             <div className="space-y-1">
                               <span className="text-[10px] font-bold text-slate-500 block">
-                                {new Date(h.timestamp).toLocaleString()}
+                                {parseUTC(h.timestamp).toLocaleString()}
                               </span>
                               <p className="text-slate-300 font-semibold">{h.reason}</p>
                             </div>

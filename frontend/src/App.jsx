@@ -10,8 +10,8 @@ import Heatmap from './components/Heatmap';
 import AdminControls from './components/AdminControls';
 import Login from './components/Login';
 
-const BACKEND_URL = "http://localhost:8000";
-const WS_URL = "ws://localhost:8000";
+const BACKEND_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8000";
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || '');
@@ -65,11 +65,11 @@ function App() {
           if (payload.type === "NEW_TRANSACTION") {
             const tx = payload.data;
             setTransactions(prev => [tx, ...prev].slice(0, 300)); // Cap local list at 300
-            
+
             // Periodically refresh cache metrics and simulator telemetry
             fetchCacheStats();
             fetchDbStats();
-            
+
             // Trigger browser notification or UI toast if flagged
             if (tx.is_flagged) {
               playAlertSound();
@@ -80,8 +80,13 @@ function App() {
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         setIsConnected(false);
+        if (event.code === 1008) {
+          logger("WebSocket authentication failed (token likely expired). Logging out...");
+          handleLogout();
+          return;
+        }
         logger("WebSocket feed closed. Attempting reconnect...");
         // Reconnect after 3 seconds
         setTimeout(() => {
@@ -128,6 +133,8 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         setTransactions(data);
+      } else if (res.status === 401) {
+        handleLogout();
       }
     } catch (err) {
       console.error("Failed to fetch transactions:", err);
@@ -142,6 +149,8 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         setCacheStats(data);
+      } else if (res.status === 401) {
+        handleLogout();
       }
     } catch (err) {
       console.error("Failed to fetch cache stats:", err);
@@ -156,6 +165,8 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         setSimulatorStatus(data);
+      } else if (res.status === 401) {
+        handleLogout();
       }
     } catch (err) {
       console.error("Failed to fetch simulator status:", err);
@@ -170,6 +181,8 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         setDbStats(data);
+      } else if (res.status === 401) {
+        handleLogout();
       }
     } catch (err) {
       console.error("Failed to fetch database stats:", err);
@@ -209,18 +222,18 @@ function App() {
 
   return (
     <div className="flex flex-col min-h-screen bg-darkBg text-slate-100 font-sans">
-      <Navbar 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
-        user={user} 
-        onLogout={handleLogout} 
-        isConnected={isConnected} 
+      <Navbar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        user={user}
+        onLogout={handleLogout}
+        isConnected={isConnected}
       />
-      
+
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 py-6">
         {activeTab === 'dashboard' && (
-          <DashboardOverview 
-            transactions={transactions} 
+          <DashboardOverview
+            transactions={transactions}
             cacheStats={cacheStats}
             simulatorStatus={simulatorStatus}
             setActiveTab={setActiveTab}
@@ -228,18 +241,18 @@ function App() {
             dbStats={dbStats}
           />
         )}
-        
+
         {activeTab === 'live-feed' && (
-          <LiveFeed 
-            transactions={transactions} 
+          <LiveFeed
+            transactions={transactions}
             setSelectedTxId={setSelectedTxId}
             setActiveTab={setActiveTab}
           />
         )}
-        
+
         {activeTab === 'alerts' && (
-          <AlertsList 
-            transactions={transactions} 
+          <AlertsList
+            transactions={transactions}
             setTransactions={setTransactions}
             token={token}
             backendUrl={BACKEND_URL}
@@ -247,50 +260,54 @@ function App() {
             setActiveTab={setActiveTab}
             fetchCacheStats={fetchCacheStats}
             fetchDbStats={fetchDbStats}
+            onLogout={handleLogout}
           />
         )}
-        
+
         {activeTab === 'users' && (
-          <TrustRankings 
-            token={token} 
-            backendUrl={BACKEND_URL} 
+          <TrustRankings
+            token={token}
+            backendUrl={BACKEND_URL}
+            onLogout={handleLogout}
           />
         )}
-        
+
         {activeTab === 'reports' && (
-          <InvestigationPortal 
-            selectedTxId={selectedTxId} 
+          <InvestigationPortal
+            selectedTxId={selectedTxId}
             setSelectedTxId={setSelectedTxId}
             transactions={transactions}
-            token={token} 
+            token={token}
             backendUrl={BACKEND_URL}
+            onLogout={handleLogout}
           />
         )}
-        
+
         {activeTab === 'analytics' && (
-          <AnalyticsCharts 
-            transactions={transactions} 
+          <AnalyticsCharts
+            transactions={transactions}
           />
         )}
 
         {activeTab === 'heatmap' && (
-          <Heatmap 
-            transactions={transactions} 
+          <Heatmap
+            transactions={transactions}
           />
         )}
-        
+
         {activeTab === 'admin' && (
-          <AdminControls 
-            token={token} 
-            backendUrl={BACKEND_URL} 
+          <AdminControls
+            token={token}
+            backendUrl={BACKEND_URL}
             simulatorStatus={simulatorStatus}
             fetchSimulatorStatus={fetchSimulatorStatus}
             cacheStats={cacheStats}
             fetchCacheStats={fetchCacheStats}
+            onLogout={handleLogout}
           />
         )}
       </main>
-      
+
       <footer className="py-4 text-center border-t border-cardBorder/40 bg-cardBg/30 text-xs text-slate-500">
         <p>TrustGuard AI Fraud Intelligence Platform &copy; 2026. Inspired by Stripe & TrustGuard Risk Infrastructure.</p>
       </footer>

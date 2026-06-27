@@ -1,4 +1,5 @@
 import React from 'react';
+import { parseUTC } from '../utils';
 import { DollarSign, ShieldAlert, Cpu, Database, AlertCircle, ArrowUpRight, Zap, RefreshCw, Play, Square } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts';
 
@@ -20,7 +21,7 @@ function DashboardOverview({ transactions, cacheStats, simulatorStatus, setActiv
 
   // Generate chart data based on transaction timestamps
   const chartData = [...transactions].reverse().slice(-10).map((t, idx) => ({
-    name: new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    name: parseUTC(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     Amount: t.amount,
     Risk: t.risk_score
   }));

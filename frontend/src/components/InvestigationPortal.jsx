@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Eye, FileText, Search, Play, RefreshCw, CheckCircle2, ChevronRight, User } from 'lucide-react';
 
-function InvestigationPortal({ selectedTxId, setSelectedTxId, transactions, token, backendUrl }) {
+function InvestigationPortal({ selectedTxId, setSelectedTxId, transactions, token, backendUrl, onLogout }) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [activeAgentTab, setActiveAgentTab] = useState('summary'); // "summary", "investigator", "analyst"
@@ -28,6 +28,8 @@ function InvestigationPortal({ selectedTxId, setSelectedTxId, transactions, toke
       if (res.ok) {
         const data = await res.json();
         setReport(data);
+      } else if (res.status === 401 && onLogout) {
+        onLogout();
       }
     } catch (err) {
       console.error("Failed to fetch report:", err);
@@ -47,6 +49,8 @@ function InvestigationPortal({ selectedTxId, setSelectedTxId, transactions, toke
       if (res.ok) {
         const data = await res.json();
         setReport(data);
+      } else if (res.status === 401 && onLogout) {
+        onLogout();
       }
     } catch (err) {
       console.error("Reinvestigate failed:", err);
